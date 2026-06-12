@@ -7,9 +7,6 @@ A modular, drop-in event logging and browser system for full RAG pipelines.
 ## Architecture
 
 ```
-rag_pipeline.py          ← your 10 pipeline stages
-      │  calls
-      ▼
 rag_logger.py            ← PipelineLogger (per-stage)
       │  writes
       ▼
@@ -29,7 +26,6 @@ event_browser.html       ← live event table in the browser
 | File | Purpose |
 |---|---|
 | `rag_logger.py` | Core logger — `get_logger(stage)` returns a `PipelineLogger` |
-| `rag_pipeline.py` | All 10 RAG stages with logging wired in; replace stubs with real logic |
 | `event_server.py` | Flask server — serves the browser + REST API + SSE live stream |
 | `event_browser.html` | Standalone HTML event browser (also served by Flask) |
 | `requirements.txt` | Python dependencies |
@@ -46,8 +42,6 @@ pip install -r requirements.txt
 python event_server.py
 # → http://localhost:5050
 
-# 3. run (part of) your pipeline in another terminal
-python rag_pipeline.py
 ```
 
 Open `http://localhost:5050` in your browser — events appear live.
