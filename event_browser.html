@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RAG Pipeline — Event Monitor</title>
+<style>
+  :root {
+    --bg:       #ffffff;
+    --bg2:      #f6f6f4;
+    --bg3:      #ededea;
+    --text:     #1a1a18;
+    --text2:    #5f5e5a;
+    --border:   rgba(0,0,0,0.12);
+    --radius:   8px;
+    --radius-lg:12px;
+    --font:     -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+    --crit-bg:  #fcebeb; --crit-fg: #a32d2d; --crit-row: rgba(226,75,74,0.06);
+    --err-bg:   #faeeda; --err-fg:  #854f0b; --err-row:  rgba(239,159,39,0.07);
+    --warn-bg:  #eaf3de; --warn-fg: #3b6d11; --warn-row: rgba(99,153,34,0.06);
+    --info-bg:  #e6f1fb; --info-fg: #185fa5; --info-row: transparent;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg3); color: var(--text); font-size: 14px; min-height: 100vh; }
+
+  /* ── header ── */
+  .header { background: var(--bg); border-bottom: 0.5px solid var(--border); padding: 0 24px; height: 52px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .header h1 { font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #3b6d11; animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(0.85)} }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+  .refresh-btn { font-size: 13px; padding: 5px 14px; border-radius: var(--radius); border: 0.5px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
+  .refresh-btn:hover { background: var(--bg2); }
+
+  /* ── layout ── */
+  .main { max-width: 1200px; margin: 0 auto; padding: 20px 24px; }
+
+  /* ── summary cards ── */
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
+  .s-card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 12px 16px; cursor: pointer; transition: box-shadow .15s; }
+  .s-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+  .s-card.active { border-width: 1.5px; }
+  .s-card.active.critical { border-color: var(--crit-fg); }
+  .s-card.active.error    { border-color: var(--err-fg); }
+  .s-card.active.warning  { border-color: var(--warn-fg); }
+  .s-card.active.info     { border-color: var(--info-fg); }
+  .s-label { font-size: 11px; color: var(--text2); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+  .s-count { font-size: 28px; font-weight: 500; line-height: 1; }
+  .s-count.critical { color: var(--crit-fg); }
+  .s-count.error    { color: var(--err-fg); }
+  .s-count.warning  { color: var(--warn-fg); }
+  .s-count.info     { color: var(--info-fg); }
+
+  /* ── toolbar ── */
+  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-group { display: flex; gap: 6px; }
+  .f-btn { font-size: 12px; padding: 4px 12px; border-radius: 20px; border: 0.5px solid var(--border); background: var(--bg2); color: var(--text2); cursor: pointer; transition: all .12s; }
+  .f-btn.active { background: var(--bg); border-color: var(--text2); color: var(--text); font-weight: 500; }
+  .search-input { flex: 1; min-width: 160px; max-width: 280px; font-size: 13px; padding: 5px 12px; border-radius: var(--radius); border: 0.5px solid var(--border); background: var(--bg); color: var(--text); outline: none; }
+  .search-input:focus { border-color: rgba(0,0,0,0.3); }
+
+  /* ── table ── */
+  .table-wrap { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+  thead th { font-size: 11px; font-weight: 500; color: var(--text2); text-align: left; padding: 8px 12px; border-bottom: 0.5px solid var(--border); text-transform: uppercase; letter-spacing: .04em; background: var(--bg2); }
+  th.col-stage  { width: 15%; }
+  th.col-msg    { width: 35%; }
+  th.col-sev    { width: 10%; }
+  th.col-ts     { width: 18%; }
+  th.col-extra  { width: 12%; }
+  th.col-action { width: 10%; }
+  tbody tr { border-bottom: 0.5px solid var(--border); transition: background .08s; cursor: default; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { filter: brightness(0.97); }
+  tr.sev-critical { background: var(--crit-row); }
+  tr.sev-error    { background: var(--err-row); }
+  tr.sev-warning  { background: var(--warn-row); }
+  tr.sev-info     { background: var(--info-row); }
+  td { padding: 9px 12px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.msg-cell { white-space: normal; word-break: break-word; line-height: 1.45; }
+  td.ts-cell  { font-size: 12px; color: var(--text2); }
+  td.extra-cell { font-size: 11px; color: var(--text2); }
+
+  .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 500; padding: 2px 9px; border-radius: 20px; white-space: nowrap; }
+  .badge.critical { background: var(--crit-bg); color: var(--crit-fg); }
+  .badge.error    { background: var(--err-bg);  color: var(--err-fg); }
+  .badge.warning  { background: var(--warn-bg); color: var(--warn-fg); }
+  .badge.info     { background: var(--info-bg); color: var(--info-fg); }
+
+  .stage-tag { font-size: 11px; padding: 2px 8px; border-radius: var(--radius); background: var(--bg2); color: var(--text2); white-space: nowrap; }
+  .validate-btn { font-size: 12px; padding: 4px 10px; border-radius: var(--radius); border: 0.5px solid var(--border); background: transparent; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .validate-btn:hover { background: var(--bg2); }
+
+  .empty { padding: 48px; text-align: center; color: var(--text2); font-size: 14px; }
+
+  /* ── modal ── */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-start; justify-content: center; padding-top: 72px; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); width: 560px; max-width: 96vw; max-height: 85vh; overflow-y: auto; padding: 20px 22px; }
+  .modal-hdr { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+  .modal-hdr h2 { font-size: 15px; font-weight: 500; }
+  .close-btn { background: none; border: none; cursor: pointer; color: var(--text2); font-size: 20px; line-height: 1; padding: 0; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .meta-cell { background: var(--bg2); border-radius: var(--radius); padding: 7px 10px; }
+  .meta-lbl { font-size: 11px; color: var(--text2); margin-bottom: 2px; }
+  .meta-val { font-size: 13px; font-weight: 500; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .field textarea, .field select { width: 100%; font-size: 13px; border-radius: var(--radius); border: 0.5px solid var(--border); background: var(--bg); color: var(--text); padding: 7px 10px; font-family: var(--font); resize: vertical; }
+  .field textarea:focus, .field select:focus { outline: none; border-color: rgba(0,0,0,0.3); }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; border-top: 0.5px solid var(--border); margin-top: 4px; }
+  .btn { font-size: 13px; padding: 6px 16px; border-radius: var(--radius); border: 0.5px solid var(--border); background: transparent; color: var(--text); cursor: pointer; font-weight: 500; }
+  .btn:hover { background: var(--bg2); }
+  .btn-resolve { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-fg); }
+  .btn-resolve:hover { background: #c0dd97; }
+
+  /* ── toast ── */
+  .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 8px 20px; font-size: 13px; display: none; z-index: 200; box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+  .toast.show { display: block; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1>
+    <span class="live-dot" id="live-dot" title="Live SSE connection"></span>
+    RAG Pipeline — Event Monitor
+  </h1>
+  <div class="header-right">
+    <span id="last-update" style="font-size:12px;color:#888;"></span>
+    <button class="refresh-btn" onclick="fetchEvents()">&#8635; Refresh</button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="summary">
+    <div class="s-card critical" id="card-critical" onclick="toggleFilter('CRITICAL')">
+      <div class="s-label">Critical</div>
+      <div class="s-count critical" id="cnt-critical">0</div>
+    </div>
+    <div class="s-card error" id="card-error" onclick="toggleFilter('ERROR')">
+      <div class="s-label">Error</div>
+      <div class="s-count error" id="cnt-error">0</div>
+    </div>
+    <div class="s-card warning" id="card-warning" onclick="toggleFilter('WARNING')">
+      <div class="s-label">Warning</div>
+      <div class="s-count warning" id="cnt-warning">0</div>
+    </div>
+    <div class="s-card info" id="card-info" onclick="toggleFilter('INFO')">
+      <div class="s-label">Info</div>
+      <div class="s-count info" id="cnt-info">0</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="filter-group">
+      <button class="f-btn active" id="fbtn-all"      onclick="setFilter('all')">All</button>
+      <button class="f-btn"        id="fbtn-active"   onclick="setFilter('active')">Active</button>
+      <button class="f-btn"        id="fbtn-resolved" onclick="setFilter('resolved')">Resolved</button>
+    </div>
+    <input class="search-input" type="text" placeholder="Search message or stage…"
+           id="search-box" oninput="renderTable()" />
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-stage">Stage</th>
+          <th class="col-msg">Event message</th>
+          <th class="col-sev">Severity</th>
+          <th class="col-ts">Timestamp</th>
+          <th class="col-extra">Extra</th>
+          <th class="col-action">Action</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty-state" style="display:none;">No events match the current filter.</div>
+  </div>
+</main>
+
+<!-- ── Validate / edit modal ── -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="modal-title">Event details</h2>
+      <button class="close-btn" onclick="closeModal()" title="Close">&times;</button>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-cell"><div class="meta-lbl">Stage</div><div class="meta-val" id="m-stage"></div></div>
+      <div class="meta-cell"><div class="meta-lbl">Severity</div><div class="meta-val" id="m-sev"></div></div>
+      <div class="meta-cell"><div class="meta-lbl">Event ID</div><div class="meta-val" id="m-id"></div></div>
+      <div class="meta-cell"><div class="meta-lbl">Timestamp</div><div class="meta-val" id="m-ts" style="font-size:12px;"></div></div>
+    </div>
+    <div class="field">
+      <label>Event message</label>
+      <textarea id="m-message" rows="3"></textarea>
+    </div>
+    <div class="field">
+      <label>Extra metadata</label>
+      <textarea id="m-extra" rows="3" readonly style="color:#888;font-family:monospace;font-size:12px;"></textarea>
+    </div>
+    <div class="field">
+      <label>Root cause / notes</label>
+      <textarea id="m-notes" rows="3" placeholder="Describe the root cause or add correction notes…"></textarea>
+    </div>
+    <div class="field">
+      <label>Corrective action</label>
+      <select id="m-action">
+        <option value="">— select action —</option>
+        <option>Rerun ingestion for this source</option>
+        <option>Re-chunk with adjusted overlap</option>
+        <option>Re-embed affected documents</option>
+        <option>Rebuild vector index</option>
+        <option>Restart retrieval query</option>
+        <option>Retrigger context assembly</option>
+        <option>Regenerate LLM response</option>
+        <option>Revalidate output format</option>
+        <option>Redeploy model endpoint</option>
+        <option>Reset monitoring alert</option>
+        <option>Ignore / mark as known</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="saveEvent()">Save notes</button>
+      <button class="btn btn-resolve" onclick="resolveEvent()">&#10003; Mark resolved</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';   // same origin; change to 'http://localhost:5050' if running separately
+
+let allEvents  = [];
+let activeFilter = 'all';
+let sevFilter    = null;
+let currentId    = null;
+
+/* ── fetch ───────────────────────────────────────────────────────────────── */
+async function fetchEvents() {
+  try {
+    const r = await fetch(API + '/api/events');
+    allEvents = await r.json();
+    updateStats();
+    renderTable();
+    document.getElementById('last-update').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    showToast('Could not reach event server.');
+  }
+}
+
+/* ── SSE live tail ──────────────────────────────────────────────────────── */
+function startSSE() {
+  const es = new EventSource(API + '/api/events/stream');
+  es.onopen    = () => { document.getElementById('live-dot').style.background = '#3b6d11'; };
+  es.onerror   = () => { document.getElementById('live-dot').style.background = '#a32d2d'; };
+  es.onmessage = e => {
+    try {
+      const ev = JSON.parse(e.data);
+      const idx = allEvents.findIndex(x => x.event_id === ev.event_id);
+      if (idx === -1) allEvents.unshift(ev);
+      else allEvents[idx] = { ...allEvents[idx], ...ev };
+      updateStats();
+      renderTable();
+      document.getElementById('last-update').textContent =
+        'Live — ' + new Date().toLocaleTimeString();
+    } catch(_) {}
+  };
+}
+
+/* ── filter controls ─────────────────────────────────────────────────────── */
+function setFilter(f) {
+  activeFilter = f;
+  sevFilter    = null;
+  document.querySelectorAll('.f-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('fbtn-' + f).classList.add('active');
+  document.querySelectorAll('.s-card').forEach(c => c.classList.remove('active'));
+  renderTable();
+}
+
+function toggleFilter(sev) {
+  if (sevFilter === sev) {
+    sevFilter = null;
+    document.querySelectorAll('.s-card').forEach(c => c.classList.remove('active'));
+  } else {
+    sevFilter = sev;
+    document.querySelectorAll('.s-card').forEach(c => c.classList.remove('active'));
+    document.getElementById('card-' + sev.toLowerCase()).classList.add('active');
+  }
+  renderTable();
+}
+
+/* ── table render ────────────────────────────────────────────────────────── */
+function renderTable() {
+  const search = document.getElementById('search-box').value.toLowerCase();
+  let rows = allEvents.filter(e => {
+    if (activeFilter === 'active'   && e.resolved) return false;
+    if (activeFilter === 'resolved' && !e.resolved) return false;
+    if (sevFilter && e.severity.toUpperCase() !== sevFilter) return false;
+    if (search) {
+      const hay = (e.message + e.stage + e.event_id).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+
+  const tbody = document.getElementById('tbody');
+  const empty = document.getElementById('empty-state');
+  if (!rows.length) { tbody.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = rows.map(e => {
+    const sev  = (e.severity || 'info').toLowerCase();
+    const eid  = e.event_id  || '';
+    const ext  = e.extra ? Object.entries(e.extra).map(([k,v]) => `${k}=${v}`).join(', ') : '';
+    const ts   = (e.timestamp || '').replace('T',' ').replace(/\..+$/,'');
+    const resolvedStyle = e.resolved ? 'opacity:0.45;text-decoration:line-through;' : '';
+    return `
+      <tr class="sev-${sev}" style="${resolvedStyle}">
+        <td><span class="stage-tag">${fmt(e.stage)}</span></td>
+        <td class="msg-cell">${esc(e.message)}</td>
+        <td><span class="badge ${sev}">${cap(sev)}</span></td>
+        <td class="ts-cell">${ts}</td>
+        <td class="extra-cell" title="${esc(ext)}">${esc(ext.substring(0,40))}${ext.length>40?'…':''}</td>
+        <td><button class="validate-btn" onclick="openModal('${eid}')">Validate</button></td>
+      </tr>`;
+  }).join('');
+}
+
+/* ── stats ───────────────────────────────────────────────────────────────── */
+function updateStats() {
+  const active = allEvents.filter(e => !e.resolved);
+  ['critical','error','warning','info'].forEach(s => {
+    document.getElementById('cnt-'+s).textContent =
+      active.filter(e => (e.severity||'').toLowerCase() === s).length;
+  });
+}
+
+/* ── modal ───────────────────────────────────────────────────────────────── */
+function openModal(id) {
+  const e = allEvents.find(x => x.event_id === id);
+  if (!e) return;
+  currentId = id;
+  document.getElementById('modal-title').textContent = id + ' — ' + fmt(e.stage);
+  document.getElementById('m-stage').textContent   = fmt(e.stage);
+  document.getElementById('m-sev').innerHTML       = `<span class="badge ${(e.severity||'').toLowerCase()}">${cap(e.severity||'info')}</span>`;
+  document.getElementById('m-id').textContent      = id;
+  document.getElementById('m-ts').textContent      = (e.timestamp||'').replace('T',' ').replace(/\..+$/,'');
+  document.getElementById('m-message').value       = e.message || '';
+  document.getElementById('m-extra').value         = e.extra ? JSON.stringify(e.extra, null, 2) : '';
+  document.getElementById('m-notes').value         = e.notes  || '';
+  document.getElementById('m-action').value        = e.action || '';
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('overlay').classList.remove('open');
+  currentId = null;
+}
+
+async function saveEvent() {
+  if (!currentId) return;
+  const body = {
+    message: document.getElementById('m-message').value,
+    notes:   document.getElementById('m-notes').value,
+    action:  document.getElementById('m-action').value,
+  };
+  await patchEvent(currentId, body);
+  closeModal();
+  showToast('Notes saved.');
+}
+
+async function resolveEvent() {
+  if (!currentId) return;
+  const body = {
+    resolved: true,
+    notes:    document.getElementById('m-notes').value,
+    action:   document.getElementById('m-action').value,
+    message:  document.getElementById('m-message').value,
+  };
+  await patchEvent(currentId, body);
+  closeModal();
+  showToast('Event marked as resolved.');
+}
+
+async function patchEvent(id, body) {
+  try {
+    const r = await fetch(API + '/api/events/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const updated = await r.json();
+    const idx = allEvents.findIndex(x => x.event_id === id);
+    if (idx !== -1) allEvents[idx] = { ...allEvents[idx], ...updated };
+    updateStats();
+    renderTable();
+  } catch(e) {
+    showToast('Server update failed — changes applied locally only.');
+    const idx = allEvents.findIndex(x => x.event_id === id);
+    if (idx !== -1) allEvents[idx] = { ...allEvents[idx], ...body };
+    updateStats();
+    renderTable();
+  }
+}
+
+/* ── helpers ─────────────────────────────────────────────────────────────── */
+function fmt(s)  { return (s||'').replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase()); }
+function cap(s)  { return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : ''; }
+function esc(s)  { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showToast(msg, ms=2400) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms);
+}
+document.getElementById('overlay').addEventListener('click', e => { if(e.target===e.currentTarget) closeModal(); });
+
+/* ── init ────────────────────────────────────────────────────────────────── */
+fetchEvents();
+startSSE();
+</script>
+</body>
+</html>
